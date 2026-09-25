@@ -243,15 +243,35 @@ const elfPlugin: Plugin.Plugin = {
           return;
         }
 
-        // Completed result: the V2 shell tool appends "Exit code N" on non-zero exits
-        // and "Command was aborted before completion" when the user interrupts.
-        const outputText = resultText(event.result);
-        const aborted = outputText.includes("Command was aborted before completion");
-        const exitMatch = outputText.match(/Exit code (\d+)/);
-        const failed = !aborted && !!exitMatch && exitMatch[1] !== "0";
+        // Completed result: the V2 shell tool reports the exit code in
+        // result.metadata.exit and appends "Exited with code N" to the text.
+        const result = event.result as {
+          content?: string | ReadonlyArray<unknown>;
+          output?: { exit?: number; status?: string };
+          metadata?: { exit?: number; status?: string };
+        } | undefined;
+
+        const outputText = resultText(result);
+        const exitCode = typeof result?.metadata?.exit === "number"
+          ? result.metadata.exit
+          : typeof result?.output?.exit === "number"
+            ? result.output.exit
+            : undefined;
+        const resultStatus = result?.metadata?.status ?? result?.output?.status;
+
+        // Ignore user interruptions (SIGINT/130) and aborted commands.
+        if (exitCode === 130) return;
+        const aborted = resultStatus === "aborted" ||
+          outputText.includes("aborted before completion") ||
+          outputText.includes("Command was aborted");
+
+        const failed = !aborted && (
+          (exitCode !== undefined && exitCode !== 0) ||
+          /Exited with code [1-9]/.test(outputText)
+        );
 
         if (failed) {
-          const errorDetail = exitMatch ? exitMatch[0] : outputText.slice(-200);
+          const errorDetail = exitCode !== undefined ? `Exited with code ${exitCode}` : outputText.slice(-200);
           await recordFailure(
             toolName,
             args,

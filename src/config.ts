@@ -67,8 +67,17 @@ export function getProjectDbPath(workingDirectory: string): string | null {
   if (!projectRoot) {
     return null;
   }
-  
-  return join(projectRoot, PROJECT_ELF_SUBDIR, PROJECT_DB_NAME);
+
+  const projectDbPath = join(projectRoot, PROJECT_ELF_SUBDIR, PROJECT_DB_NAME);
+
+  // When the project root is the home directory, the project database path
+  // resolves to the global database path. Report no project database so
+  // queries do not read the same file twice.
+  if (projectDbPath === GLOBAL_DB_PATH) {
+    return null;
+  }
+
+  return projectDbPath;
 }
 
 /**
