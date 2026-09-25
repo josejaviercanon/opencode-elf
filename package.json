@@ -26,6 +26,7 @@
     "metrics:view": "node scripts/view-metrics.js",
     "cleanup:preview": "node scripts/cleanup-expired.js preview",
     "cleanup:clean": "node scripts/cleanup-expired.js clean",
+    "test:compat": "ts-node tests/compat.test.ts",
     "test:simulate": "ts-node tests/simulate.ts",
     "test:hybrid": "ts-node tests/test-hybrid.ts",
     "test:benchmark": "ts-node tests/benchmark.ts",
@@ -46,13 +47,15 @@
     "url": "https://github.com/mark-hingston/opencode-elf"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@libsql/client": "^0.14.0",
-    "@opencode/plugin": "^2.0.16",
-    "@xenova/transformers": "^2.17.2"
+    "@opencode/plugin": "^2.0.16"
   },
+  "//": "Native stack is aligned with opencode-mem so both plugins can share DLLs in one OpenCode process: @huggingface/transformers 4.x + onnxruntime-node 1.20.1 + sharp 0.35.4. Windows resolves native DLLs by base name and reuses the first loaded module; mismatched onnxruntime.dll / libvips-42.dll versions crash the second plugin (ERROR_INVALID_ORDINAL 182 / ERROR_PROC_NOT_FOUND 127). @xenova/transformers is not compatible with onnxruntime-node 1.20.1 ('Tensor.data must be a typed array'). See README 'Running with opencode-mem'.",
   "overrides": {
-    "onnxruntime-node": "1.14.0",
-    "onnxruntime-web": "1.14.0"
+    "onnxruntime-node": "1.20.1",
+    "onnxruntime-web": "1.20.1",
+    "sharp": "0.35.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

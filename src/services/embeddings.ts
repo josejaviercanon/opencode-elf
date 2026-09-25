@@ -1,8 +1,8 @@
 // Type-only import: erased at build time. OpenCode V2's plugin loader cannot
-// resolve @xenova/transformers' static native imports at load time, so the
+// resolve @huggingface/transformers' static native imports at load time, so the
 // pipeline is loaded with a dynamic import inside init().
-import type { FeatureExtractionPipeline } from "@xenova/transformers";
-import { EMBEDDING_MODEL } from "../config.js";
+import type { FeatureExtractionPipeline } from "@huggingface/transformers";
+import { ELF_CACHE_DIR, EMBEDDING_MODEL } from "../config.js";
 
 interface CacheEntry {
   embedding: number[];
@@ -37,7 +37,12 @@ class EmbeddingService {
   public async init(): Promise<void> {
     if (!this.pipe) {
       console.log("ELF: Loading embedding model...");
-      const { pipeline } = await import("@xenova/transformers");
+      const { pipeline, env } = await import("@huggingface/transformers");
+      // Keep the model cache inside the ELF data directory instead of the
+      // process working directory.
+      env.allowLocalModels = true;
+      env.allowRemoteModels = true;
+      env.cacheDir = ELF_CACHE_DIR;
       this.pipe = await pipeline("feature-extraction", EMBEDDING_MODEL) as FeatureExtractionPipeline;
       console.log("ELF: Model loaded.");
     }

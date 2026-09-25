@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 // Storage configuration
 export const GLOBAL_ELF_DIR = join(homedir(), ".opencode", "elf");
 export const GLOBAL_DB_PATH = join(GLOBAL_ELF_DIR, "memory.db");
+export const ELF_CACHE_DIR = join(GLOBAL_ELF_DIR, ".cache");
 export const PROJECT_ELF_SUBDIR = ".opencode/elf";
 export const PROJECT_DB_NAME = "memory.db";
 
