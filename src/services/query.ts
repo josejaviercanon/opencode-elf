@@ -139,7 +139,20 @@ export class QueryService {
    */
   private async searchLearnings(prompt: string): Promise<SearchResult<Learning>[]> {
     const { clients, scopes } = this.getClients();
-    const promptEmbedding = await embeddingService.generate(prompt);
+    let promptEmbedding: number[];
+
+    // Degrade to keyword search when the embedding model is unavailable
+    // (e.g. native DLL load failure on Windows). DB-backed features stay up.
+    try {
+      promptEmbedding = await embeddingService.generate(prompt);
+    } catch (error) {
+      console.error("ELF: Embedding generation failed, falling back to keyword search", error);
+      const keywordResults = await this.searchFTS(prompt);
+      return keywordResults.map(result => ({
+        ...result,
+        item: { ...result.item, matchType: 'keyword' as const },
+      }));
+    }
 
     // Query all databases in parallel
     const results = await Promise.all(
@@ -268,12 +281,12 @@ export class QueryService {
     const seenIds = new Set<string>();
     const merged: SearchResult<Learning>[] = [];
 
-    // Add vector results first (with original semantic scores)
+    // Add vector results first (preserve keyword fallback tag when degraded)
     for (const result of vectorResults) {
       if (!seenIds.has(result.item.id)) {
         merged.push({
           ...result,
-          item: { ...result.item, matchType: 'semantic' as const }
+          item: { ...result.item, matchType: result.item.matchType ?? 'semantic' as const }
         });
         seenIds.add(result.item.id);
       }
@@ -389,8 +402,16 @@ export class QueryService {
       return; // Already recorded
     }
 
-    // Generate embedding
-    const embedding = await embeddingService.generate(sanitizedContent);
+    // Generate embedding. When the embedding model is unavailable the learning
+    // cannot be stored (embedding column is NOT NULL), so skip it and keep the
+    // rest of the plugin working instead of failing the tool hook.
+    let embedding: number[];
+    try {
+      embedding = await embeddingService.generate(sanitizedContent);
+    } catch (error) {
+      console.log("ELF: Skipping learning record (embeddings unavailable)");
+      return;
+    }
 
     // Store learning
     const id = createHash('sha256')

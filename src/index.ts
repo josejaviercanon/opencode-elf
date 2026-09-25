@@ -83,6 +83,12 @@ const elfPlugin: Plugin.Plugin = {
     // Track initialization state
     let initError: Error | null = null;
 
+    // Embedding availability. When the model fails to load (native DLL
+    // conflicts on Windows), DB-backed features keep working and search falls
+    // back to keyword-only instead of the whole plugin failing.
+    let embeddingsReady = false;
+    let embeddingError: string | null = null;
+
     // Track the most recently injected learning IDs to provide feedback
     let lastInjectedLearningIds: string[] = [];
 
@@ -103,14 +109,27 @@ const elfPlugin: Plugin.Plugin = {
           await initDatabase(paths.project);
         }
 
-        // Pre-load embedding model (This is the heavy part)
-        await embeddingService.init();
+        // Pre-load embedding model (This is the heavy part). Failure is not
+        // fatal: DB-backed modes keep working with keyword-only search.
+        try {
+          await embeddingService.init();
+          embeddingsReady = true;
+          embeddingError = null;
+        } catch (error) {
+          embeddingsReady = false;
+          embeddingError = error instanceof Error ? error.message : String(error);
+          console.error("ELF: Embedding model unavailable, running in degraded (keyword-only) mode", embeddingError);
+        }
 
         // Check if global database is empty and seed if needed
         const isEmpty = await isDatabaseEmpty(GLOBAL_DB_PATH);
         if (isEmpty) {
           console.log("ELF: First run detected - seeding default data...");
-          await seedGoldenRules(queryService.addGoldenRule.bind(queryService));
+          if (embeddingsReady) {
+            await seedGoldenRules(queryService.addGoldenRule.bind(queryService));
+          } else {
+            console.log("ELF: Skipping golden-rule seeding (embeddings unavailable)");
+          }
           await seedHeuristics(GLOBAL_DB_PATH);
         }
 
@@ -449,6 +468,14 @@ const elfPlugin: Plugin.Plugin = {
               });
             }
 
+            if (!embeddingsReady) {
+              return JSON.stringify({
+                success: false,
+                embeddingsDegraded: true,
+                error: `Cannot add golden rule: embedding model unavailable (${embeddingError ?? "not loaded"}). Golden rules need vector embeddings; heuristics-add, learnings-list and keyword search still work.`,
+              });
+            }
+
             const scope = args.scope || "global";
             await queryService.addGoldenRule(args.content, scope);
 
@@ -524,6 +551,13 @@ const elfPlugin: Plugin.Plugin = {
               success: true,
               query: args.query,
               count: results.length,
+              // Surface degraded mode so the caller knows results are keyword-only.
+              ...(embeddingsReady
+                ? {}
+                : {
+                    embeddingsDegraded: true,
+                    warning: `Semantic search unavailable (${embeddingError ?? "embedding model not loaded"}); showing keyword matches only.`,
+                  }),
               results: results.slice(0, limit).map(r => ({
                 id: r.item.id,
                 content: r.item.content,
