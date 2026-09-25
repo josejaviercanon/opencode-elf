@@ -69,6 +69,8 @@ try {
     try {
         # devDependencies are omitted: the "prepare" script detects the missing
         # typescript and keeps the prebuilt dist/ from the tarball.
+        # Do NOT add --ignore-scripts here: sharp and onnxruntime-node need their
+        # lifecycle scripts to download their native binaries.
         npm install --omit=dev --no-audit --no-fund
         if ($LASTEXITCODE -ne 0) {
             throw "npm install failed with exit code $LASTEXITCODE"

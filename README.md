@@ -1,5 +1,12 @@
 # OpenCode ELF Plugin
 
+> **Platform support: Windows 11 x64 only.**
+> This fork is developed, packaged and verified on Windows 11 x64 with all four
+> companion plugins (`opencode-elf`, `opencode-mem`, `openrtk`, `caveman`)
+> enabled in the same OpenCode process. Linux and macOS are not supported.
+> Co-install requires the pinned native dependency versions listed in
+> [Running with opencode-mem](#running-with-opencode-mem).
+
 **[Emergent Learning Framework (ELF)](https://github.com/Spacehunterz/Emergent-Learning-Framework_ELF)** for OpenCode - Learn from past successes and failures to continuously improve your AI coding assistant.
 
 ## Overview
@@ -51,7 +58,7 @@ Golden Rules:
 ### Local-First Architecture
 
 - Uses local SQLite storage (no cloud dependencies)
-- Local embeddings with @xenova/transformers (no API calls)
+- Local embeddings with @huggingface/transformers (no API calls)
 - All data stays on your machine
 - Works offline after initial model download (~90MB)
 - Automatic cleanup prevents database from growing indefinitely
@@ -114,6 +121,8 @@ powershell -ExecutionPolicy Bypass -File scripts\install-elf.ps1 -Tarball .\open
 
 The script installs the plugin to `%USERPROFILE%\.config\opencode\plugins\opencode-elf` and runs `npm install` there.
 
+> **Native dependencies:** dependency install must run lifecycle scripts (this is the default). A plain `npm install` is correct. If dependencies were installed with `--ignore-scripts`, sharp and onnxruntime-node have no native binaries; repair with `npm rebuild sharp onnxruntime-node` before starting OpenCode.
+
 ### Option 2: Global plugins directory (manual)
 
 Copy the package into the OpenCode config directory:
@@ -123,6 +132,8 @@ Copy the package into the OpenCode config directory:
 ```
 
 OpenCode discovers global plugins under `~/.config/opencode/plugins/` automatically. No config entry is needed.
+
+After copying, run `npm install` in that directory so the pinned native dependencies (`onnxruntime-node` 1.20.1, `sharp` 0.35.4) are present.
 
 ### Option 3: Git package
 
@@ -159,22 +170,42 @@ Ask OpenCode to use the `elf` tool, or check the service log for `ELF: Ready`.
 
 ## Running with opencode-mem
 
-opencode-mem and opencode-elf cover different cognitive domains and form a complementary pair. They do not crash each other and can run together.
+opencode-mem and opencode-elf cover different cognitive domains and form a complementary pair. They can run together, but they share two native libraries inside the same OpenCode process.
 
 - [opencode-mem](https://github.com/tickernelz/opencode-mem) is the **Architect**: static project rules, memory layouts, user profile preferences, and domain knowledge.
 - opencode-elf is the **Supervisor**: it records tool failures after they happen (build failures, CLI syntax errors, failing tests) and injects relevant past learnings into later requests. It does not edit the failing command mid-flight.
 
+### Native DLL compatibility (required versions)
+
+Windows resolves native DLLs by **base name** and reuses the first module already loaded in the process. If another plugin loads a different `onnxruntime.dll` or `libvips-42.dll` first, later loads fail with:
+
+```
+LoadLibrary failed: The operating system cannot run %1.        (ERROR_INVALID_ORDINAL, 182)
+LoadLibrary failed: The specified procedure could not be found. (ERROR_PROC_NOT_FOUND, 127)
+```
+
+Both plugins must therefore ship the **same** native dependency versions:
+
+| Native dependency | Required version | Pulled in by |
+| --- | --- | --- |
+| `onnxruntime-node` | 1.20.1 | `@huggingface/transformers` (ELF), `@huggingface/transformers` (mem) |
+| `sharp` | 0.35.4 | `@huggingface/transformers` (ELF), `@huggingface/transformers` (mem) |
+
+ELF pins both via `overrides` in `package.json`. Do not lower these pins. A system-wide `onnxruntime.dll` in `C:\Windows\System32` (installed by Windows ML) can also be picked up by the loader and cause the same failures.
+
 Two costs to manage when running both:
 
 1. **Context window.** Each plugin injects its own memory block. ELF injects only when it has relevant rules, learnings, or heuristics. Compressing tool output (for example with [openrtk](https://github.com/josejaviercanon/openrtk)) keeps room for both.
-2. **CPU.** Each plugin runs its own local embedding pipeline in the background: ELF uses `@xenova/transformers` (all-MiniLM-L6-v2, ~90 MB model), opencode-mem uses `@huggingface/transformers`. A multi-core CPU handles both; indexing a large failure log can cause a brief spike.
+2. **CPU.** Each plugin runs its own local embedding pipeline in the background: ELF uses `@huggingface/transformers` with `Xenova/all-MiniLM-L6-v2` (~90 MB model), opencode-mem uses `@huggingface/transformers` with `Xenova/nomic-embed-text-v1`. A multi-core CPU handles both; indexing a large failure log can cause a brief spike.
+
+If the embedding model cannot load, ELF degrades instead of failing: DB-backed modes (`rules-list`, `heuristics-list`, `learnings-list`, `metrics`, `heuristics-add`) keep working and `search` falls back to keyword-only results with an `embeddingsDegraded` marker.
 
 Boundary rules:
 
 - Save architecture documents, user preferences, and domain knowledge with opencode-mem.
 - Let ELF capture terminal errors, syntax corrections, and build failures automatically. Do not duplicate architectural rules into ELF.
 
-This fork was developed and verified with opencode-mem loaded simultaneously.
+This fork was developed and verified with opencode-mem loaded simultaneously (Windows 11 x64).
 
 ## Architecture
 
@@ -219,7 +250,7 @@ This fork was developed and verified with opencode-mem loaded simultaneously.
 │                                                      │
 │  Embeddings:                                         │
 │  ┌──────────────────────────────────────────────┐    │
-│  │  @xenova/transformers                        │    │
+│  │  @huggingface/transformers                        │    │
 │  │  Model: Xenova/all-MiniLM-L6-v2              │    │
 │  └──────────────────────────────────────────────┘    │
 │                                                      │
@@ -638,7 +669,7 @@ opencode plugin list
 
 The plugin targets the V2 plugin API. Two loader constraints shaped the implementation:
 
-- OpenCode resolves only relative imports while loading a plugin, so runtime dependencies (`node:sqlite`, `@xenova/transformers`) are imported dynamically instead of statically. `@opencode/plugin` is a type-only import.
+- OpenCode resolves only relative imports while loading a plugin, so runtime dependencies (`node:sqlite`, `@huggingface/transformers`) are imported dynamically instead of statically. `@opencode/plugin` is a type-only import.
 - SQLite uses Node's built-in `node:sqlite` (Node 22+, Bun) with `@libsql/client` as a fallback for older Node versions.
 
 ## Troubleshooting
