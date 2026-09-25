@@ -1,4 +1,3 @@
-import { createClient, type Client } from "@libsql/client";
 import { mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { createHash } from "node:crypto";
@@ -6,13 +5,85 @@ import { GLOBAL_DB_PATH } from "../config.js";
 
 export type DbScope = "global" | "project";
 
+/** Row shape returned by database queries. */
+export type DbRow = Record<string, unknown>;
+
+/** Minimal async database interface used across ELF. */
+export interface DbClient {
+  execute(input: string | { sql: string; args?: unknown[] }): Promise<{ rows: DbRow[]; rowsAffected: number }>;
+  close(): void;
+}
+
+interface NodeStatement {
+  all(...params: unknown[]): unknown[];
+  run(...params: unknown[]): { changes?: number | bigint };
+}
+
+interface NodeDatabase {
+  prepare(sql: string): NodeStatement;
+  close(): void;
+}
+
+type DatabaseSyncConstructor = new (path: string) => NodeDatabase;
+
+type Engine =
+  | { kind: "node"; DatabaseSync: DatabaseSyncConstructor }
+  | { kind: "libsql"; createClient: (options: { url: string }) => DbClient };
+
+let engine: Engine | null = null;
+
+/**
+ * Load the SQLite engine on demand.
+ *
+ * OpenCode V2's plugin loader cannot resolve some bare imports from the plugin
+ * directory, so the engine is imported from an async context instead. Node's
+ * built-in SQLite (Node 22+, Bun) is preferred; @libsql/client remains the
+ * fallback for older Node versions.
+ */
+export async function loadDatabaseEngine(): Promise<Engine> {
+  if (engine) return engine;
+
+  try {
+    const sqlite = await import("node:sqlite");
+    engine = { kind: "node", DatabaseSync: sqlite.DatabaseSync as DatabaseSyncConstructor };
+  } catch {
+    const libsql = await import("@libsql/client");
+    engine = { kind: "libsql", createClient: (options) => libsql.createClient(options) as DbClient };
+  }
+
+  return engine;
+}
+
+class NodeSqliteClient implements DbClient {
+  constructor(private readonly db: NodeDatabase) {}
+
+  async execute(input: string | { sql: string; args?: unknown[] }): Promise<{ rows: DbRow[]; rowsAffected: number }> {
+    const sql = typeof input === "string" ? input : input.sql;
+    const args = typeof input === "string" ? [] : (input.args ?? []);
+    const statement = this.db.prepare(sql);
+
+    // SELECT-like statements return rows; everything else reports changed rows.
+    if (/^\s*(select|with|pragma)\b/i.test(sql)) {
+      const rows = statement.all(...args) as DbRow[];
+      return { rows, rowsAffected: 0 };
+    }
+
+    const info = statement.run(...args);
+    return { rows: [], rowsAffected: Number(info?.changes ?? 0) };
+  }
+
+  close(): void {
+    this.db.close();
+  }
+}
+
 // Track multiple database clients
-const dbClients: Map<string, Client> = new Map();
+const dbClients: Map<string, DbClient> = new Map();
 
 /**
  * Get or create a database client for a specific path
  */
-export function getDbClient(dbPath: string = GLOBAL_DB_PATH): Client {
+export function getDbClient(dbPath: string = GLOBAL_DB_PATH): DbClient {
   const existingClient = dbClients.get(dbPath);
   if (existingClient) {
     return existingClient;
@@ -24,9 +95,13 @@ export function getDbClient(dbPath: string = GLOBAL_DB_PATH): Client {
     mkdirSync(dir, { recursive: true });
   }
 
-  const client = createClient({
-    url: `file:${dbPath}`,
-  });
+  if (!engine) {
+    throw new Error("ELF: database engine not loaded yet (call initDatabase or loadDatabaseEngine first)");
+  }
+
+  const client: DbClient = engine.kind === "node"
+    ? new NodeSqliteClient(new engine.DatabaseSync(dbPath))
+    : engine.createClient({ url: `file:${dbPath}` });
 
   dbClients.set(dbPath, client);
   return client;
@@ -35,8 +110,8 @@ export function getDbClient(dbPath: string = GLOBAL_DB_PATH): Client {
 /**
  * Get multiple database clients for hybrid queries
  */
-export function getDbClients(paths: { global: string; project: string | null }): Client[] {
-  const clients: Client[] = [getDbClient(paths.global)];
+export function getDbClients(paths: { global: string; project: string | null }): DbClient[] {
+  const clients: DbClient[] = [getDbClient(paths.global)];
 
   if (paths.project) {
     clients.push(getDbClient(paths.project));
@@ -49,6 +124,7 @@ export function getDbClients(paths: { global: string; project: string | null }):
  * Initialize a database with the ELF schema
  */
 export async function initDatabase(dbPath?: string): Promise<void> {
+  await loadDatabaseEngine();
   const db = getDbClient(dbPath);
 
   const queries = [
@@ -135,6 +211,7 @@ export async function initDatabase(dbPath?: string): Promise<void> {
  * Check if the database is empty (no golden rules or heuristics)
  */
 export async function isDatabaseEmpty(dbPath?: string): Promise<boolean> {
+  await loadDatabaseEngine();
   const db = getDbClient(dbPath);
 
   const [rulesResult, heuristicsResult] = await Promise.all([
@@ -229,6 +306,7 @@ export async function seedGoldenRules(addGoldenRule: (content: string) => Promis
 export async function seedHeuristics(dbPath?: string): Promise<void> {
   console.log("ELF: Seeding default heuristics...");
 
+  await loadDatabaseEngine();
   const db = getDbClient(dbPath);
 
   for (const heuristic of DEFAULT_HEURISTICS) {
@@ -252,6 +330,7 @@ export async function seedHeuristics(dbPath?: string): Promise<void> {
  * This is needed for databases created before FTS support was added
  */
 export async function backfillFTS(dbPath?: string): Promise<void> {
+  await loadDatabaseEngine();
   const db = getDbClient(dbPath);
 
   try {

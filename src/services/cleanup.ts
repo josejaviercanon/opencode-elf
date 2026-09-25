@@ -1,4 +1,4 @@
-import type { Client } from "@libsql/client";
+import type { DbClient } from "../db/client.js";
 import {
   RULE_EXPIRATION_DAYS,
   RULE_MIN_HITS_TO_KEEP,
@@ -15,7 +15,7 @@ export interface CleanupStats {
 /**
  * Clean up expired rules, learnings, and heuristics from a database
  */
-export async function cleanupExpiredData(db: Client): Promise<CleanupStats> {
+export async function cleanupExpiredData(db: DbClient): Promise<CleanupStats> {
   const now = Date.now();
   const stats: CleanupStats = {
     rulesDeleted: 0,
@@ -53,7 +53,7 @@ export async function cleanupExpiredData(db: Client): Promise<CleanupStats> {
 /**
  * Get statistics about data that would be deleted (dry run)
  */
-export async function getCleanupPreview(db: Client): Promise<CleanupStats> {
+export async function getCleanupPreview(db: DbClient): Promise<CleanupStats> {
   const now = Date.now();
   const stats: CleanupStats = {
     rulesDeleted: 0,

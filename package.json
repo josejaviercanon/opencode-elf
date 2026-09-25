@@ -1,14 +1,21 @@
 {
   "name": "opencode-elf",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Emergent Learning Framework (ELF) plugin for OpenCode - Learn from past successes and failures with hybrid global/project storage",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "prepare": "npm run build",
+    "prepare": "node scripts/prepare.mjs",
+    "pack:dist": "npm pack",
     "rules:add": "node scripts/manage-rules.js add",
     "rules:list": "node scripts/manage-rules.js list",
     "rules:seed": "node scripts/seed-rules.js",
@@ -40,22 +47,27 @@
   },
   "dependencies": {
     "@libsql/client": "^0.14.0",
+    "@opencode/plugin": "^2.0.16",
     "@xenova/transformers": "^2.17.2"
   },
+  "overrides": {
+    "onnxruntime-node": "1.14.0",
+    "onnxruntime-web": "1.14.0"
+  },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.0.147",
-    "@types/node": "^20.11.5",
+    "@types/node": "^24.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   },
-  "opencode": {
-    "type": "plugin",
-    "hooks": [
-      "chat.params",
-      "event"
-    ]
-  },
   "files": [
-    "dist"
-  ]
+    "dist",
+    "index.ts",
+    "scripts/prepare.mjs"
+  ],
+  "allowScripts": {
+    "protobufjs": true,
+    "sharp": true,
+    "msgpackr-extract": true,
+    "onnxruntime-node": true
+  }
 }

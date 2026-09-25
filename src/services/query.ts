@@ -3,7 +3,7 @@ import { embeddingService } from "./embeddings.js";
 import type { GoldenRule, Learning, Heuristic, SearchResult, ELFContext, MemoryScope } from "../types/elf.js";
 import { MAX_GOLDEN_RULES, MAX_RELEVANT_LEARNINGS, SIMILARITY_THRESHOLD, getDbPaths, AUTO_CLEANUP_ENABLED } from "../config.js";
 import { createHash } from "node:crypto";
-import type { Client } from "@libsql/client";
+import type { DbClient } from "../db/client.js";
 import { cleanupExpiredData } from "./cleanup.js";
 
 // Privacy tag regex pattern
@@ -62,7 +62,7 @@ export class QueryService {
   /**
    * Get all active database clients (global + project if available)
    */
-  private getClients(): { clients: Client[]; scopes: MemoryScope[] } {
+  private getClients(): { clients: DbClient[]; scopes: MemoryScope[] } {
     const paths = getDbPaths(this.workingDirectory);
     const clients = getDbClients(paths);
     const scopes: MemoryScope[] = ["global"];

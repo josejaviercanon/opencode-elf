@@ -91,18 +91,71 @@ The API key is <private>sk-abc123xyz</private>
 
 ## Installation
 
-Add to your OpenCode config:
+### Requirements
+
+- OpenCode V2 (plugin API `@opencode/plugin` 2.x)
+- Node.js 22+ for the optional CLI scripts (`node:sqlite`). OpenCode itself provides its own runtime for the plugin.
+
+### Option 1: Local tarball (recommended for this fork)
+
+Build and pack the plugin:
+
+```bash
+npm install
+npm run build
+npm run pack:dist
+```
+
+This creates `opencode-elf-<version>.tgz`. On the target machine run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-elf.ps1 -Tarball .\opencode-elf-0.7.0.tgz
+```
+
+The script installs the plugin to `%USERPROFILE%\.config\opencode\plugins\opencode-elf` and runs `npm install` there.
+
+### Option 2: Global plugins directory (manual)
+
+Copy the package into the OpenCode config directory:
+
+```text
+~/.config/opencode/plugins/opencode-elf/
+```
+
+OpenCode discovers global plugins under `~/.config/opencode/plugins/` automatically. No config entry is needed.
+
+### Option 3: Git package
+
+```bash
+opencode plugin add github:josejaviercanon/opencode-elf
+```
+
+### Configuration
+
+If an older `opencode-elf` entry is still present in `plugins`, remove it. OpenCode resolves bare names from npm and would load the old V1 package:
 
 ```jsonc
 // opencode.jsonc
 {
-  "plugin": ["opencode-elf@latest"]
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    // "opencode-elf"  <- remove: the local plugin is auto-discovered
+  ]
 }
 ```
 
-Using `@latest` ensures you always get the newest version automatically when OpenCode starts.
+Restart the service after installing:
 
-Restart OpenCode. The plugin will automatically load.
+```bash
+opencode service restart
+opencode plugin list
+```
+
+First run downloads the embedding model (~90 MB) into the plugin cache.
+
+### Verify
+
+Ask OpenCode to use the `elf` tool, or check the service log for `ELF: Ready`.
 
 ## Architecture
 
@@ -120,15 +173,15 @@ Restart OpenCode. The plugin will automatically load.
 │                                                      │
 │  Hooks:                                              │
 │  ┌─────────────────┐      ┌────────────────────┐     │
-│  │  chat.params    │─────▶│ Context Injection  │     │
+│  │  context hook   │─────▶│ Context Injection  │     │
 │  │  (pre-LLM)      │      │ - Golden Rules     │     │
 │  │                 │      │ - Past Learnings   │     │
 │  │                 │      │ - Heuristics       │     │
 │  └─────────────────┘      └────────────────────┘     │
 │                                                      │
 │  ┌─────────────────┐      ┌────────────────────┐     │
-│  │  event          │─────▶│ Learning Loop      │     │
-│  │  (post-tool)    │      │ - Record failures  │     │
+│  │  tool hook      │─────▶│ Learning Loop      │     │
+│  │  execute.after  │      │ - Record failures  │     │
 │  │                 │      │ - Record successes │     │
 │  │                 │      │ - Utility Feedback │     │
 │  └─────────────────┘      └────────────────────┘     │
@@ -141,7 +194,7 @@ Restart OpenCode. The plugin will automatically load.
 │                                                      │
 │  Storage:                                            │
 │  ┌──────────────────────────────────────────────┐    │
-│  │  libsql (SQLite)                             │    │
+│  │  SQLite (node:sqlite, libsql fallback)       │    │
 │  │  ~/.opencode/elf/memory.db                   │    │
 │  └──────────────────────────────────────────────┘    │
 │                                                      │
@@ -192,11 +245,11 @@ When a tool executes, ELF:
 The plugin provides an `elf` tool that agents can invoke to manage memory:
 
 **Available modes:**
-- `list-rules` - List all golden rules (optional `scope: "global" | "project"`)
-- `list-heuristics` - List all heuristics (optional `scope`)
-- `list-learnings` - View recent learnings (optional `limit` and `scope`)
-- `add-rule` - Add new golden rule (auto-generates embeddings, optional `scope`)
-- `add-heuristic` - Add new heuristic pattern (optional `scope`)
+- `rules-list` - List all golden rules (optional `scope: "global" | "project"`)
+- `heuristics-list` - List all heuristics (optional `scope`)
+- `learnings-list` - View recent learnings (optional `limit` and `scope`)
+- `rules-add` - Add new golden rule (auto-generates embeddings, optional `scope`)
+- `heuristics-add` - Add new heuristic pattern (optional `scope`)
 - `metrics` - View performance metrics
 - `search` - Hybrid search across all learnings (requires `query`, optional `limit`)
 
@@ -296,8 +349,7 @@ If you prefer slash commands for quick inspection, you can add them to your Open
 ```jsonc
 // opencode.jsonc or ~/.config/opencode/opencode.jsonc
 {
-  "plugin": ["opencode-elf@latest"],
-  "command": {
+  "commands": {
     "elf": {
       "template": "Use the elf tool. Arguments: $ARGUMENTS",
       "description": "ELF memory system. Commands: rules list, heuristics list, learnings list, search, metrics, rules add, heuristics add"
@@ -493,18 +545,19 @@ The plugin uses SQLite with the following tables:
 opencode-elf/
 ├── package.json              # Dependencies & scripts
 ├── tsconfig.json             # TypeScript config
+├── index.ts                  # OpenCode discovery entry (re-exports dist)
 ├── README.md                 # This file
 ├── LICENSE                   # MIT license
 │
 ├── src/
-│   ├── index.ts              # Plugin entry (hooks)
+│   ├── index.ts              # Plugin entry (V2 hooks and tools)
 │   ├── config.ts             # Configuration
 │   │
 │   ├── types/
 │   │   └── elf.ts            # TypeScript types
 │   │
 │   ├── db/
-│   │   └── client.ts         # Database client & schema
+│   │   └── client.ts         # Database engine & schema
 │   │
 │   └── services/
 │       ├── embeddings.ts     # Vector embeddings
@@ -513,6 +566,8 @@ opencode-elf/
 │       └── cleanup.ts        # Automatic data cleanup
 │
 ├── scripts/
+│   ├── install-elf.ps1       # Windows installer for other machines
+│   ├── prepare.mjs           # Build guard used by npm install
 │   ├── manage-rules.js       # CLI: add/list/delete rules
 │   ├── manage-heuristics.js  # CLI: add/list/delete heuristics
 │   ├── view-learnings.js     # CLI: view learnings
@@ -529,7 +584,7 @@ opencode-elf/
 
 ## Development
 
-### Building
+### Building and Packaging
 
 ```bash
 # Install dependencies
@@ -538,47 +593,43 @@ npm install
 # Build for production
 npm run build
 
-# Watch mode for development
-npm run dev
-```
-
-### Testing
-
-```bash
-# Run end-to-end simulation
-npm run test:simulate
-
-# Test hybrid storage functionality
-npm run test:hybrid
-
-# Run performance benchmarks
-npm run test:benchmark
+# Create a distributable tarball (runs the build first)
+npm run pack:dist
 ```
 
 ### Local Development Installation
 
-For local development without publishing to npm:
+For development, build the plugin and install it into the OpenCode global plugins directory:
 
 ```bash
-# Clone and build
-git clone https://github.com/mark-hingston/opencode-elf.git
-cd opencode-elf
 npm install
 npm run build
-
-# Add to your opencode.jsonc using local path
-{
-  "plugin": ["file:///absolute/path/to/opencode-elf"]
-}
+npm run pack:dist
+powershell -ExecutionPolicy Bypass -File scripts\install-elf.ps1 -Tarball .\opencode-elf-0.7.0.tgz
 ```
+
+Restart the service after installing:
+
+```bash
+opencode service restart
+opencode plugin list
+```
+
+### OpenCode V2 notes
+
+The plugin targets the V2 plugin API. Two loader constraints shaped the implementation:
+
+- OpenCode resolves only relative imports while loading a plugin, so runtime dependencies (`node:sqlite`, `@xenova/transformers`) are imported dynamically instead of statically. `@opencode/plugin` is a type-only import.
+- SQLite uses Node's built-in `node:sqlite` (Node 22+, Bun) with `@libsql/client` as a fallback for older Node versions.
 
 ## Troubleshooting
 
 ### Plugin Not Loading
-- Check OpenCode logs for errors
-- Verify plugin is in your `opencode.jsonc` config
-- Ensure `dist/` folder exists (run `npm run build`)
-- Check for TypeScript compilation errors
+- Check the OpenCode log for `failed to load plugin`
+- Verify the plugin directory exists: `~/.config/opencode/plugins/opencode-elf`
+- Ensure `dist/` exists inside that directory (the tarball ships it)
+- Remove any `opencode-elf` entry from `plugins` in `opencode.jsonc` (auto-discovery replaces it)
+- Check for TypeScript compilation errors with `npm run build`
 
 ### Embedding Model Download
 First run will download the model (~90MB). This takes 1-2 minutes. Subsequent runs are instant.
