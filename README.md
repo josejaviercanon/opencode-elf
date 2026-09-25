@@ -157,6 +157,25 @@ First run downloads the embedding model (~90 MB) into the plugin cache.
 
 Ask OpenCode to use the `elf` tool, or check the service log for `ELF: Ready`.
 
+## Running with opencode-mem
+
+opencode-mem and opencode-elf cover different cognitive domains and form a complementary pair. They do not crash each other and can run together.
+
+- [opencode-mem](https://github.com/tickernelz/opencode-mem) is the **Architect**: static project rules, memory layouts, user profile preferences, and domain knowledge.
+- opencode-elf is the **Supervisor**: it records tool failures after they happen (build failures, CLI syntax errors, failing tests) and injects relevant past learnings into later requests. It does not edit the failing command mid-flight.
+
+Two costs to manage when running both:
+
+1. **Context window.** Each plugin injects its own memory block. ELF injects only when it has relevant rules, learnings, or heuristics. Compressing tool output (for example with [openrtk](https://github.com/josejaviercanon/openrtk)) keeps room for both.
+2. **CPU.** Each plugin runs its own local embedding pipeline in the background: ELF uses `@xenova/transformers` (all-MiniLM-L6-v2, ~90 MB model), opencode-mem uses `@huggingface/transformers`. A multi-core CPU handles both; indexing a large failure log can cause a brief spike.
+
+Boundary rules:
+
+- Save architecture documents, user preferences, and domain knowledge with opencode-mem.
+- Let ELF capture terminal errors, syntax corrections, and build failures automatically. Do not duplicate architectural rules into ELF.
+
+This fork was developed and verified with opencode-mem loaded simultaneously.
+
 ## Architecture
 
 ```
